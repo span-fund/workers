@@ -1,0 +1,28 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "sf-report",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-12-09",
+	"observability": {
+		"enabled": true
+	},
+	"triggers": {
+		"crons": [
+			"* * * * *"
+		]
+	},
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "WORKFLOWS",
+				"class_name": "Workflows",
+			},
+		],
+  	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_classes": ["Workflows"],
+		},
+	],
+}
