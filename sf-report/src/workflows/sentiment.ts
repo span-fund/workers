@@ -1,82 +1,150 @@
-import { Effect } from "effect";
+import { Effect, Data } from "effect";
 import {
     Workflow,
-    createDurableWorkflows
+    WorkflowContext,
+    StepContext,
+    createDurableWorkflows,
 } from "@durable-effect/workflow";
+import { getHashRibbons, getMvRv, getNUPL } from "../services/sentiment";
+import { HashRibbonsFailed, MVRVFailed, NUPLFailed } from "../services/errors";
 
-const onChainWorkflow = Workflow.make((taskId: string) => 
-        Effect.gen(function* () {
+// =============================================================================
+// Fetch On Chain Workflow
+// =============================================================================
 
-            yield* Effect.log(`Processing data for task ${taskId}`);
-            
-            yield* Workflow.step("MVRV", fetchMVRVIdempotent(taskId));
-            
-            yield* Workflow.step("NUPL", fetchNUPLIdempotent(taskId));
-            
-            yield* Workflow.step("Hash Ribbons", fetchHashRibbonsIdempotent(taskId));
-        }),
-);
-
-const macroWorkflow = Workflow.make((taskId: string) => 
+const fetchOnChainWorkflow = Workflow.make((taskId: string) =>
     Effect.gen(function* () {
-        yield* Effect.log(`Processing data for task ${taskId}`);
+        const workflowCtx = yield* WorkflowContext;
 
-        yield* Workflow.step("Initial Jobless Claims", fetchInitialJoblessClaimsIdempotent(taskId));
-    }),
+        yield* Effect.log(`Processing workflow ${workflowCtx.workflowName}, with id ${workflowCtx.workflowId}`);
+
+        const mvrv = yield* Workflow.step("MVRV",
+            fetchMVRVIdempotent(taskId)
+                .pipe(
+                    Effect.catchTag("FetchError", (error) =>
+                        Effect.fail(
+                            new MVRVFailed({ reason: `Status Code: ${error.status}`, taskId: taskId }))
+                    ),
+                    Workflow.retry({
+                        maxAttempts: 3,
+                        delay: "2 seconds",
+                    })
+                ));
+
+        yield* Workflow.step("NUPL",
+            fetchNUPLIdempotent(taskId).pipe(
+                Effect.catchTag("FetchError", (error) =>
+                    Effect.fail(
+                        new NUPLFailed({ reason: `Status Code: ${error.status}`, taskId: taskId }))
+                )
+            )
+        );
+
+        yield* Workflow.step("Hash Ribbons",
+            fetchHashRibbonsIdempotent(taskId).pipe(
+                Effect.catchTag("FetchError", (error) =>
+                    Effect.fail(
+                        new HashRibbonsFailed({ reason: `Status Code: ${error.status}`, taskId: taskId }))
+                )
+            )
+        );
+
+        yield* workflowCtx.setMeta("completed", Date.now());
+    })
+        // .pipe(
+        //     Effect.catchAll((error) =>
+        //         Effect.gen(function* () {
+        //             const ctx = yield* WorkflowContext;
+        //             yield* ctx.setMeta("error", String(error));
+        //             yield* Effect.logError("Workflow failed", error);
+        //         })
+        //     )),
 );
 
 const fetchMVRVIdempotent = (taskId: string) =>
     Effect.gen(function* () {
-        yield* Effect.log(`Fetching MVRV for task ${taskId}`);
 
-        return {
-            d: "2025-12-08",
-            unixTs: "1765152000",
-            mvrvZscore: "1.1987"
-          }
+        const stepCtx = yield* StepContext;
+
+        yield* Effect.log(`Fetching data for step ${stepCtx.stepName}`);
+
+        const mvrv = yield* getMvRv()
+
+        yield* Effect.log(`MVRVw: ${mvrv}`);
+
+        yield* stepCtx.setMeta("completed", Date.now());
+
+        return mvrv;
     });
 
 const fetchNUPLIdempotent = (taskId: string) =>
     Effect.gen(function* () {
-        yield* Effect.log(`Fetching NUPL for task ${taskId}`);
 
-        return {
-            d: "2025-12-08",
-            unixTs: "1765152000",
-            nupl: "0.37945313477312065"
-          }
+        const stepCtx = yield* StepContext;
+
+        yield* Effect.log(`Fetching data for step ${stepCtx.stepName}`);
+
+        const nupl = yield* getNUPL()
+
+        yield* Effect.log(`NUPLw: ${nupl}`);
+
+        yield* stepCtx.setMeta("completed", Date.now());
+
+        return nupl;
     });
 
 const fetchHashRibbonsIdempotent = (taskId: string) =>
     Effect.gen(function* () {
-        yield* Effect.log(`Fetching Hash Ribbons for task ${taskId}`);
 
-        return {
-            d: "2025-12-08",
-            unixTs: "1765152000",
-            sma_30: 1075552849.05,
-            sma_60: 1093192112.75,
-            hashribbons: "Down"
-        }
+        const stepCtx = yield* StepContext;
+
+        yield* Effect.log(`Fetching Hash Ribbons for step ${stepCtx.stepName}`);
+
+        const hashribbons = yield* getHashRibbons()
+
+        yield* Effect.log(`Hash Ribbonsw: ${hashribbons}`);
+
+        yield* stepCtx.setMeta("completed", Date.now());
+
+        return hashribbons;
     });
+
+// =============================================================================
+// Fetch Macro Workflow
+// =============================================================================
+
+const fetchMacroWorkflow = Workflow.make((taskId: string) =>
+    Effect.gen(function* () {
+        const workflowCtx = yield* WorkflowContext;
+
+        yield* Effect.log(`Processing workflow ${workflowCtx.workflowName}, with id ${workflowCtx.workflowId}`);
+
+        yield* Workflow.step("Initial Jobless Claims", fetchInitialJoblessClaimsIdempotent(taskId));
+
+        yield* workflowCtx.setMeta("completed", Date.now());
+    }),
+);
 
 const fetchInitialJoblessClaimsIdempotent = (taskId: string) =>
     Effect.gen(function* () {
-        yield* Effect.log(`Fetching Initial Jobless Claims for task ${taskId}`);
+
+        const stepCtx = yield* StepContext;
+
+        yield* Effect.log(`Fetching Initial Jobless Claims for step ${stepCtx.stepName}`);
+
+        yield* stepCtx.setMeta("completed", Date.now());
 
         return {
             realtime_start: "2025-12-09",
             realtime_end: "2025-12-09",
             date: "2025-11-29",
             value: "191000"
-          }
+        }
     });
 
 const workflows = {
-    onChainWorkflow,
-    macroWorkflow,
+    fetchOnChain: fetchOnChainWorkflow,
+    fetchMacro: fetchMacroWorkflow,
 } as const;
 
-// createDurableWorkflows returns an object with Workflows (the Durable Object class) and WorkflowClient
-// We need to destructure to get the class
-export const { Workflows } = createDurableWorkflows(workflows);
+export const { Workflows, WorkflowClient } = createDurableWorkflows(workflows);
