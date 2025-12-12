@@ -1,12 +1,14 @@
-import { Effect, Data } from "effect";
+import { Effect, Data, Schema } from "effect";
 import {
     Workflow,
     WorkflowContext,
     StepContext,
     createDurableWorkflows,
+    Backoff,
 } from "@durable-effect/workflow";
 import { getHashRibbons, getMvRv, getNUPL } from "../services/sentiment";
-import { HashRibbonsFailed, MVRVFailed, NUPLFailed } from "../services/errors";
+import { FetchError } from "../services/errors";
+import { OnChainResult } from "../services/schemas";
 
 // =============================================================================
 // Fetch On Chain Workflow
@@ -18,47 +20,48 @@ const fetchOnChainWorkflow = Workflow.make((taskId: string) =>
 
         yield* Effect.log(`Processing workflow ${workflowCtx.workflowName}, with id ${workflowCtx.workflowId}`);
 
-        const mvrv = yield* Workflow.step("MVRV",
-            fetchMVRVIdempotent(taskId)
-                .pipe(
-                    Effect.catchTag("FetchError", (error) =>
-                        Effect.fail(
-                            new MVRVFailed({ reason: `Status Code: ${error.status}`, taskId: taskId }))
-                    ),
-                    Workflow.retry({
-                        maxAttempts: 3,
-                        delay: "2 seconds",
-                    })
-                ));
+        const mvrv = yield* Workflow.step({
+            name: "MVRV",
+            execute: fetchMVRVIdempotent(taskId),
+            retry: {
+                maxAttempts: 2,
+                delay: "60 seconds",
+                isRetryable: (error) => error instanceof FetchError,
+            }
+        });
 
-        yield* Workflow.step("NUPL",
-            fetchNUPLIdempotent(taskId).pipe(
-                Effect.catchTag("FetchError", (error) =>
-                    Effect.fail(
-                        new NUPLFailed({ reason: `Status Code: ${error.status}`, taskId: taskId }))
-                )
-            )
-        );
+        yield* Workflow.sleep("10 seconds");
 
-        yield* Workflow.step("Hash Ribbons",
-            fetchHashRibbonsIdempotent(taskId).pipe(
-                Effect.catchTag("FetchError", (error) =>
-                    Effect.fail(
-                        new HashRibbonsFailed({ reason: `Status Code: ${error.status}`, taskId: taskId }))
-                )
-            )
-        );
+        const nupl = yield* Workflow.step({
+            name: "NUPL",
+            execute: fetchNUPLIdempotent(taskId),
+            retry: {
+                maxAttempts: 2,
+                delay: "60 seconds",
+                isRetryable: (error) => error instanceof FetchError,
+            }
+        });
 
-        yield* workflowCtx.setMeta("completed", Date.now());
+        yield* Workflow.sleep("10 seconds");
+
+        const hashribbons = yield* Workflow.step({
+            name: "Hash Ribbons",
+            execute: fetchHashRibbonsIdempotent(taskId),
+            retry: {
+                maxAttempts: 2,
+                delay: "60 seconds",
+                isRetryable: (error) => error instanceof FetchError,
+            }
+        });
+
+        const result = yield* Schema.decodeUnknown(OnChainResult)({
+            mvrv,
+            nupl,
+            hashribbons,
+        });
+
+        return result;
     })
-        // .pipe(
-        //     Effect.catchAll((error) =>
-        //         Effect.gen(function* () {
-        //             const ctx = yield* WorkflowContext;
-        //             yield* ctx.setMeta("error", String(error));
-        //             yield* Effect.logError("Workflow failed", error);
-        //         })
-        //     )),
 );
 
 const fetchMVRVIdempotent = (taskId: string) =>
@@ -68,13 +71,7 @@ const fetchMVRVIdempotent = (taskId: string) =>
 
         yield* Effect.log(`Fetching data for step ${stepCtx.stepName}`);
 
-        const mvrv = yield* getMvRv()
-
-        yield* Effect.log(`MVRVw: ${mvrv}`);
-
-        yield* stepCtx.setMeta("completed", Date.now());
-
-        return mvrv;
+        return yield* getMvRv();
     });
 
 const fetchNUPLIdempotent = (taskId: string) =>
@@ -84,13 +81,7 @@ const fetchNUPLIdempotent = (taskId: string) =>
 
         yield* Effect.log(`Fetching data for step ${stepCtx.stepName}`);
 
-        const nupl = yield* getNUPL()
-
-        yield* Effect.log(`NUPLw: ${nupl}`);
-
-        yield* stepCtx.setMeta("completed", Date.now());
-
-        return nupl;
+        return yield* getNUPL();
     });
 
 const fetchHashRibbonsIdempotent = (taskId: string) =>
@@ -100,13 +91,7 @@ const fetchHashRibbonsIdempotent = (taskId: string) =>
 
         yield* Effect.log(`Fetching Hash Ribbons for step ${stepCtx.stepName}`);
 
-        const hashribbons = yield* getHashRibbons()
-
-        yield* Effect.log(`Hash Ribbonsw: ${hashribbons}`);
-
-        yield* stepCtx.setMeta("completed", Date.now());
-
-        return hashribbons;
+        return yield* getHashRibbons();
     });
 
 // =============================================================================
@@ -119,7 +104,10 @@ const fetchMacroWorkflow = Workflow.make((taskId: string) =>
 
         yield* Effect.log(`Processing workflow ${workflowCtx.workflowName}, with id ${workflowCtx.workflowId}`);
 
-        yield* Workflow.step("Initial Jobless Claims", fetchInitialJoblessClaimsIdempotent(taskId));
+        yield* Workflow.step({
+            name: "Initial Jobless Claims",
+            execute: fetchInitialJoblessClaimsIdempotent(taskId)
+        });
 
         yield* workflowCtx.setMeta("completed", Date.now());
     }),

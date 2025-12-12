@@ -19,3 +19,9 @@ export class HashRibbons extends Schema.Class<HashRibbons>("HashRibbons")({
     sma_60: Schema.Number,
     hashribbons: Schema.String,
 }){}
+
+export class OnChainResult extends Schema.Class<OnChainResult>("OnChainResult")({
+    mvrv: MvRv,
+    nupl: NUPL,
+    hashribbons: HashRibbons,
+}){}

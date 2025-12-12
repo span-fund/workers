@@ -18,13 +18,8 @@ export const getOnChain: RouteEffect<Response> = Effect.gen(function* () {
       input: taskId,
       execution: { id: taskId },
     });
-
-    const status = yield* client.status(taskId);
-
-    yield* Effect.log(`Status: ${status}`);
   
     return c.json({
-      success: status,
       workflowId: id,
       taskId,
     });
@@ -48,7 +43,6 @@ export const getOnChain: RouteEffect<Response> = Effect.gen(function* () {
     });
   
     return c.json({
-      success: true,
       workflowId: id,
       taskId,
     });

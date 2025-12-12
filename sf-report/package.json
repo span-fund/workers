@@ -10,10 +10,10 @@
 	},
 	"devDependencies": {
 		"typescript": "^5.5.2",
-		"wrangler": "^4.53.0"
+		"wrangler": "^4.54.0"
 	},
 	"dependencies": {
-		"@durable-effect/workflow": "0.0.1-next.25",
+		"@durable-effect/workflow": "0.0.1-next.26",
 		"effect": "^3.19.10",
 		"hono": "^4.10.8"
 	}
